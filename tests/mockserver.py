@@ -2,32 +2,20 @@ from __future__ import print_function
 import sys, time, random, os, json
 from six.moves.urllib.parse import urlencode
 from subprocess import Popen, PIPE
+
 from twisted.web.server import Site, NOT_DONE_YET
 from twisted.web.resource import Resource
-from twisted.internet import reactor, defer, ssl
-from scrapy import twisted_version
+from twisted.web.static import File
+from twisted.web.test.test_webclient import PayloadResource
+from twisted.web.server import GzipEncoderFactory
+from twisted.web.resource import EncodingResourceWrapper
+from twisted.web.util import redirectTo
+from twisted.internet import reactor, ssl
+from twisted.internet.task import deferLater
+
+
 from scrapy.utils.python import to_bytes, to_unicode
-
-
-if twisted_version < (11, 0, 0):
-    def deferLater(clock, delay, func, *args, **kw):
-        def _cancel_method():
-            _cancel_cb(None)
-            d.errback(Exception())
-
-        def _cancel_cb(result):
-            if cl.active():
-                cl.cancel()
-            return result
-
-        d = defer.Deferred()
-        d.cancel = _cancel_method
-        d.addCallback(lambda ignored: func(*args, **kw))
-        d.addBoth(_cancel_cb)
-        cl = clock.callLater(delay, d.callback, None)
-        return d
-else:
-    from twisted.internet.task import deferLater
+from tests import tests_datadir
 
 
 def getarg(request, name, default=None, type=None):
@@ -136,6 +124,16 @@ class Echo(LeafResource):
         return to_bytes(json.dumps(output))
 
 
+class RedirectTo(LeafResource):
+
+    def render(self, request):
+        goto = getarg(request, b'goto', b'/')
+        # we force the body content, otherwise Twisted redirectTo()
+        # returns HTML with <meta http-equiv="refresh"
+        redirectTo(goto, request)
+        return b'redirecting...'
+
+
 class Partial(LeafResource):
 
     def render_GET(self, request):
@@ -174,13 +172,10 @@ class Root(Resource):
         self.putChild(b"drop", Drop())
         self.putChild(b"raw", Raw())
         self.putChild(b"echo", Echo())
-
-        if twisted_version > (12, 3, 0):
-            from twisted.web.test.test_webclient import PayloadResource
-            from twisted.web.server import GzipEncoderFactory
-            from twisted.web.resource import EncodingResourceWrapper
-            self.putChild(b"payload", PayloadResource())
-            self.putChild(b"xpayload", EncodingResourceWrapper(PayloadResource(), [GzipEncoderFactory()]))
+        self.putChild(b"payload", PayloadResource())
+        self.putChild(b"xpayload", EncodingResourceWrapper(PayloadResource(), [GzipEncoderFactory()]))
+        self.putChild(b"files", File(os.path.join(tests_datadir, 'test_site/files/')))
+        self.putChild(b"redirect-to", RedirectTo())
 
     def getChild(self, name, request):
         return self
